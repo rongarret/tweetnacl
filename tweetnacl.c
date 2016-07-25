@@ -486,6 +486,10 @@ static u64 Sigma1(u64 x) { return R(x, 14) ^ R(x, 18) ^ R(x, 41); }
 static u64 sigma0(u64 x) { return R(x, 1) ^ R(x, 8) ^ (x >> 7); }
 static u64 sigma1(u64 x) { return R(x, 19) ^ R(x, 61) ^ (x >> 6); }
 
+///////////////////////////////////////////////////////////////////////
+//
+// SHA512
+//
 static const u64 K[80] = {
     0x428a2f98d728ae22ULL, 0x7137449123ef65cdULL, 0xb5c0fbcfec4d3b2fULL,
     0xe9b5dba58189dbbcULL, 0x3956c25bf348b538ULL, 0x59f111f1b605d019ULL,
@@ -515,37 +519,42 @@ static const u64 K[80] = {
     0x431d67c49c100d4cULL, 0x4cc5d4becb3e42b6ULL, 0x597f299cfc657e2aULL,
     0x5fcb6fab3ad6faecULL, 0x6c44198c4a475817ULL};
 
-int crypto_hashblocks(u8 *x, const u8 *m, u64 n) {
-  u64 z[8], b[8], a[8], w[16], t;
+void crypto_hashblock(const u8* m, u64* a, u64* z) {
   int i, j;
+  u64 b[8], w[16], t;
+  FOR(i, 16) w[i] = dl64(m + 8 * i);
+  
+  FOR(i, 80) {
+    FOR(j, 8) b[j] = a[j];
+    t = a[7] + Sigma1(a[4]) + Ch(a[4], a[5], a[6]) + K[i] + w[i % 16];
+    b[7] = t + Sigma0(a[0]) + Maj(a[0], a[1], a[2]);
+    b[3] += t;
+    FOR(j, 8) a[(j + 1) % 8] = b[j];
+    if (i % 16 == 15)
+      FOR(j, 16)
+	w[j] +=
+	w[(j + 9) % 16] + sigma0(w[(j + 1) % 16]) + sigma1(w[(j + 14) % 16]);
+  }
+  
+  FOR(i, 8) {
+    a[i] += z[i];
+    z[i] = a[i];
+  }
+}
 
-  FOR(i, 8) z[i] = a[i] = dl64(x + 8 * i);
+int crypto_hashblocks(u8 *h, const u8 *m, u64 n) {
+  u64 a[8], z[8];
+  int i;
+
+  FOR(i, 8) a[i] = z[i] = dl64(h + 8 * i);
 
   while (n >= 128) {
-    FOR(i, 16) w[i] = dl64(m + 8 * i);
-
-    FOR(i, 80) {
-      FOR(j, 8) b[j] = a[j];
-      t = a[7] + Sigma1(a[4]) + Ch(a[4], a[5], a[6]) + K[i] + w[i % 16];
-      b[7] = t + Sigma0(a[0]) + Maj(a[0], a[1], a[2]);
-      b[3] += t;
-      FOR(j, 8) a[(j + 1) % 8] = b[j];
-      if (i % 16 == 15)
-        FOR(j, 16)
-      w[j] +=
-          w[(j + 9) % 16] + sigma0(w[(j + 1) % 16]) + sigma1(w[(j + 14) % 16]);
-    }
-
-    FOR(i, 8) {
-      a[i] += z[i];
-      z[i] = a[i];
-    }
-
+    crypto_hashblock(m, a, z);
     m += 128;
     n -= 128;
   }
 
-  FOR(i, 8) ts64(x + 8 * i, z[i]);
+  FOR(i, 8) ts64(h + 8 * i, z[i]);
 
   return n;
 }
@@ -582,6 +591,45 @@ int crypto_hash(u8 *out, const u8 *m, u64 n) {
 
   return 0;
 }
+
+// SHA512 for streamed input
+extern int crypto_hash_stream_read_block(u8* buf); // Return #chars read
+
+int crypto_hash_stream(u8 *out) {
+  u8 h[64];
+  u8 buf[128];
+  u64 msglen = 0;
+  int i;
+
+  FOR(i, 64) h[i] = iv[i];
+
+  // Process all but the final block
+  u64 a[8], z[8];
+  FOR(i, 8) a[i] = z[i] = dl64(h + 8 * i);
+  int n = crypto_hash_stream_read_block(buf);
+  msglen += n;
+  while (n >= 128) {
+    crypto_hashblock(buf, a, z);
+    n = crypto_hash_stream_read_block(buf);
+    msglen += n;
+  }
+  FOR(i, 8) ts64(h + 8 * i, z[i]);
+
+  // Process final block, n is the length of the final block
+  u8 x[256];
+  FOR(i, 256) x[i] = 0;
+  FOR(i, n) x[i] = buf[i];
+  x[n] = 128;
+  n = 256 - 128 * (n < 112);
+  x[n - 9] = msglen >> 61;
+  ts64(x + n - 8, msglen << 3);
+  crypto_hashblocks(h, x, n);
+
+  FOR(i, 64) out[i] = h[i];
+
+  return 0;
+}
+
 
 sv add(gf p[4], gf q[4]) {
   gf a, b, c, d, t, e, f, g, h;
