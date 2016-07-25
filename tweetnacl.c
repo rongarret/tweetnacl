@@ -703,11 +703,15 @@ sv scalarbase(gf p[4], const u8 *s) {
 }
 
 int crypto_sign_keypair(u8 *pk, u8 *sk) {
+  randombytes(sk, 32);
+  return crypto_sign_keypair_from_seed(pk, sk);
+}
+
+int crypto_sign_keypair_from_seed(u8 *pk, u8 *sk) {
   u8 d[64];
   gf p[4];
   int i;
 
-  randombytes(sk, 32);
   crypto_hash(d, sk, 32);
   d[0] &= 248;
   d[31] &= 127;
