@@ -850,3 +850,16 @@ int crypto_sign_open(u8 *m, u64 *mlen, const u8 *sm, u64 n, const u8 *pk) {
   *mlen = n;
   return 0;
 }
+
+// Convert Ed25519 keys to Curve25519 keys
+// SPK = Signing Public Key (i.e. Ed25519)
+// EPK = Encryption Public Key (i.e. Curve25519)
+void spk2epk(u8 *epk, u8 *spk) {
+  gf n, d;
+  unpack25519(n, spk);
+  Z(d, gf1, n);
+  inv25519(d, d);
+  A(n, gf1, n);
+  M(n, n, d);
+  pack25519(epk, n);
+}
