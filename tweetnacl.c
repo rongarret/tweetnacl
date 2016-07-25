@@ -595,6 +595,14 @@ int crypto_hash(u8 *out, const u8 *m, u64 n) {
 // SHA512 for streamed input
 extern int crypto_hash_stream_read_block(u8* buf); // Return #chars read
 
+// e.g.:
+/*
+# include <stdio.h>
+extern int crypto_hash_stream_read_block(u8* buf) {
+  return fread(buf, 1, 128, stdin);
+}
+*/
+
 int crypto_hash_stream(u8 *out) {
   u8 h[64];
   u8 buf[128];
