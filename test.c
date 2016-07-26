@@ -1,16 +1,9 @@
-
-#include "tweetnacl.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
-typedef unsigned char u8;
-typedef unsigned long u32;
-typedef unsigned long long u64;
-typedef long long i64;
-typedef const unsigned char * string;
-
-int crypto_hash_stream(u8 *out, const u8 *m, u64 n);
+#include "tweetnacl.h"
+#include "tweetnacl-aux.h"
 
 void randombytes(u8 *s, u64 n) {
   FILE *f = fopen("/dev/urandom", "r");
@@ -51,7 +44,8 @@ int main(int argc, char *argv[]) {
   printf("\n\n");
 
   rewind(f);
-  crypto_hash_stream(h, m, mlen);
+  hash_state hs;
+  crypto_hash_stream(h, &hs);
   fclose(f);
   printf("crypto_hash_stream:\n");
   for (int i=0; i<crypto_hash_BYTES; i++) printf("%02x", h[i]);

@@ -1,12 +1,6 @@
 #include "tweetnacl.h"
-#define FOR(i, n) for (i = 0; (int)i < (int)n; ++i)
-#define sv static void
+#include "tweetnacl-aux.h"
 
-typedef unsigned char u8;
-typedef unsigned long u32;
-typedef unsigned long long u64;
-typedef long long i64;
-typedef i64 gf[16];
 extern void randombytes(u8 *, u64);
 
 static const u8 _0[16], _9[32] = {9};
@@ -603,34 +597,35 @@ extern int crypto_hash_stream_read_block(u8* buf) {
 }
 */
 
-int crypto_hash_stream(u8 *out) {
-  u8 h[64];
+int crypto_hash_stream(u8 *out, hash_state *hs) {
+  u8 *h = hs->h;
   u8 buf[128];
-  u64 msglen = 0;
+  hs->msglen = 0;
   int i;
 
   FOR(i, 64) h[i] = iv[i];
 
   // Process all but the final block
-  u64 a[8], z[8];
+  u64 *a = hs->a;
+  u64 *z = hs->z;
   FOR(i, 8) a[i] = z[i] = dl64(h + 8 * i);
   int n = crypto_hash_stream_read_block(buf);
-  msglen += n;
+  hs->msglen += n;
   while (n >= 128) {
     crypto_hashblock(buf, a, z);
     n = crypto_hash_stream_read_block(buf);
-    msglen += n;
+    hs->msglen += n;
   }
   FOR(i, 8) ts64(h + 8 * i, z[i]);
 
   // Process final block, n is the length of the final block
-  u8 x[256];
+  u8 *x = hs->x;
   FOR(i, 256) x[i] = 0;
   FOR(i, n) x[i] = buf[i];
   x[n] = 128;
   n = 256 - 128 * (n < 112);
-  x[n - 9] = msglen >> 61;
-  ts64(x + n - 8, msglen << 3);
+  x[n - 9] = (hs->msglen) >> 61;
+  ts64(x + n - 8, (hs->msglen) << 3);
   crypto_hashblocks(h, x, n);
 
   FOR(i, 64) out[i] = h[i];
