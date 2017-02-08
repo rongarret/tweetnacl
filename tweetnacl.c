@@ -384,13 +384,18 @@ sv pow2523(gf o, const gf i) {
   FOR(a, 16) o[a] = c[a];
 }
 
+// q = n*p where p is the x-coordinate of a point on curver25519
+// crypto_scalarmult "clamps" n so no need to do it externally
 int crypto_scalarmult(u8 *q, const u8 *n, const u8 *p) {
   u8 z[32];
   i64 x[80], r, i;
   gf a, b, c, d, e, f;
+
+  // Copy secret key n to z and clamp it
   FOR(i, 31) z[i] = n[i];
   z[31] = (n[31] & 127) | 64;
   z[0] &= 248;
+
   unpack25519(x, p);
   FOR(i, 16) {
     b[i] = x[i];
@@ -719,11 +724,14 @@ int crypto_sign_keypair(u8 *pk, u8 *sk) {
   return crypto_sign_keypair_from_seed(pk, sk);
 }
 
+// Order of base point, 2^252+delta (radix 2^8 little endian)
 static const u64 L[32] = {0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
                           0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
                           0,    0,    0,    0,    0,    0,    0,    0,
                           0,    0,    0,    0,    0,    0,    0,    0x10};
 
+// Freeze mod order of base point (radix 2^8)
+// See the tweetnacl paper for an explanation of what that means
 sv modL(u8 *r, i64 x[64]) {
   i64 carry, i, j;
   for (i = 63; i >= 32; --i) {
@@ -749,6 +757,7 @@ sv modL(u8 *r, i64 x[64]) {
   }
 }
 
+// freeze 512-bit string mod order of base point
 sv reduce(u8 *r) {
   i64 x[64], i;
   FOR(i, 64) x[i] = (u64)r[i];
@@ -787,6 +796,7 @@ int crypto_sign(u8 *sm, u64 *smlen, const u8 *m, u64 n, const u8 *sk) {
   return 0;
 }
 
+// load curve point (?)
 static int unpackneg(gf r[4], const u8 p[32]) {
   gf t, chk, num, den, den2, den4, den6;
   set25519(r[2], gf1);
