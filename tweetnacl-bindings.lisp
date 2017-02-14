@@ -40,7 +40,8 @@ SOFTWARE.
 (require :rffi)
 
 ; gcc -shared tweetnacl.c test.c -o tweetnacl.so
-(ff-load "path-to-tweetnacl/tweetnacl.so")
+(add-path (this-directory))
+(ff-load "tweetnacl.so")
 
 ;;; Secret key encryption
 
