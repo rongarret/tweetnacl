@@ -19,6 +19,7 @@ so some of the design is carried over from that project.
 
 (require :ergolib)
 (require :basen)
+(pushnew (this-directory) *module-search-path* :test 'equalp)
 (require :tweetnacl-bindings)
 
 ; This should go in general utilities
@@ -136,7 +137,7 @@ serialization hashes match.
       loglenlen (integer-length loglen)
       (if (and len-power-of-2? (<= loglenlen 4))
         (octets loglen)
-        (cat (octets (logior 16 (ceiling (integer-length len) 8)))
+        (cat (octets (logior 16 (ceiling loglen 8)))
              (integer->octets len)))))
 
 (defun set-type-tag (v tag)
@@ -176,7 +177,7 @@ serialization hashes match.
 (defun deserialize-object (v)
   (bb idx (logand (ref v 0) #x1F)
       class (ref $serializable-classes idx)
-      (unless class (error "Unknown deserialization index: ~A" idx))
+      (unless class (error "Unknown deserialization class index: ~A" idx))
       :mv (slot-values v) (deserialize (slice! v 1))
       slot-names (slot-names class)
       o (make-instance class)
@@ -357,7 +358,7 @@ serialization hashes match.
       (unless otpk (error "OTPK ~A unknown" otpkid))
       (del otpk-dict otpkid)
       (push otpkid used-otpkids)
-      dh4 (and otpk (dh otpk ek))
+      dh4 (dh otpk ek)
       (hkdf (cat dh1 dh2 dh3 dh4))))
 
 (define-method (x3dh-rx (user sc4-user) (hdr vector))
@@ -378,8 +379,6 @@ serialization hashes match.
 
 (defun kdf-ck (ck) (kdf-rk "" ck))
 
-(defun generate-dh () (sc4-key (random-bytes 32)))
-
 (define-class ratchet-header pk pn n)
 
 (define-print-method (ratchet-header pk pn n) "#<Ratchet-header ~A ~A ~A>" pk pn n)
@@ -388,6 +387,30 @@ serialization hashes match.
 
 (define-print-method (ratchet-session user mskipped) 
   "#<Ratchet session ~A ~A skipped>" user (length (keys mskipped)))
+
+(define-method (init-for-tx (rs ratchet-session user dhs dhr rk cks)
+                            (sender sc4-user) (recipient-key-bundle key-bundle identity-pk)
+                            &optional msg)
+  (reset rs)
+  (setf user sender)
+  (bb :mv (sk hdr) (x3dh-tx user recipient-key-bundle)
+      (setf dhs (random-sc4-key)
+            dhr identity-pk
+            (values rk cks) (kdf-rk sk (dh dhs dhr)))
+      (cat (serialize hdr) (and msg (crypto-secretbox msg sk z24)))))
+
+(define-method (init-for-tx (rs ratchet-session) (sender sc4-user) (recipient sc4-user)
+                            &optional msg)
+  (init-for-tx rs sender (get-key-bundle recipient) msg))
+
+(define-method (init-for-rx (rs ratchet-session user dhs rk)
+                            (recipient sc4-user idk) x3dh-header)
+  (reset rs)
+  (setf user recipient)
+  (setf dhs idk)
+  (bb :mv (sk msg) (x3dh-rx user x3dh-header)
+      (setf rk sk)
+      (or msg t)))
 
 ; Encrypt
 
@@ -449,25 +472,6 @@ serialization hashes match.
         dhs (random-sc4-key)
         (values rk cks) (kdf-rk rk (dh dhs dhr))))
 
-(define-method (init-for-tx (rs ratchet-session user dhs dhr rk cks)
-                            sender recipient &optional msg)
-  (reset rs)
-  (bb :mv (sk hdr) (x3dh-tx sender recipient)
-      (setf user sender
-            dhs (random-sc4-key)
-            dhr (ref* recipient 'idk 'pubkeys)
-            (values rk cks) (kdf-rk sk (dh dhs dhr)))
-      (cat (serialize hdr) (and msg (crypto-secretbox msg sk z24)))))
-
-(define-method (init-for-rx (rs ratchet-session user dhs rk) (recipient sc4-user idk)
-                            x3dh-header)
-  (reset rs)
-  (setf dhs idk)
-  (setf user recipient)
-  (bb :mv (sk msg) (x3dh-rx recipient x3dh-header)
-      (setf rk sk)
-      (or msg t)))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
 ;;; Tests
@@ -492,9 +496,7 @@ serialization hashes match.
 ; Setup
 
 (set-serializable-classes
- '(
-   sc4-secret-key sc4-public-key x3dh-header ratchet-header
-   signature))
+ '(sc4-public-key x3dh-header ratchet-header signature))
 
 (defun serialization-hash ()
   (bb l (for c in $serializable-classes collect
@@ -502,7 +504,7 @@ serialization hashes match.
       s (substitute #\_ #\- (string-downcase (princ-to-string l)))
       (values (b58 (slice (sha512 s) 0 16)) s)))
 
-(assert (equal (serialization-hash) "QxT8ErCEhmK886v9mjSAMn"))
+(assert (equal (serialization-hash) "5RP6tvVXwTsCPsUMid9AMx"))
 
 ; Set up users and corresponding ratchet sessions
 
@@ -510,9 +512,9 @@ serialization hashes match.
 (defv bob (make-sc4-user 'bob))
 (defv charlie (make-sc4-user 'charlie))
 
-(defv rsa (make-ratchet-session :user 'alice))
-(defv rsb (make-ratchet-session :user 'bob))
-(defv rsc (make-ratchet-session :user 'charlie))
+(defv rsa (make-ratchet-session))
+(defv rsb (make-ratchet-session))
+(defv rsc (make-ratchet-session))
 
 ; Reset and provision the OTPK server
 (reset $otpk-server)
@@ -551,9 +553,9 @@ serialization hashes match.
 (defun random-sequence () (random-bytes (random 32)))
 
 (dotimes (i 5)
-  (setf l (for i in (counter 0 12) collect (ratchet-encrypt rsa (random-sequence))))
-  (expect-error (ratchet-decrypt rsb (1st (last l)) nil))
-  (for msg in l do (ratchet-decrypt rsb msg nil))
-  (setf l (for i in (counter 0 9) collect (ratchet-encrypt rsa (random-sequence))))
-  (for msg in (reverse l) do (ratchet-decrypt rsb msg nil))
-  )
+  (bb l (for i in (counter 0 12) collect (ratchet-encrypt rsa (random-sequence)))
+      (expect-error (ratchet-decrypt rsb (1st (last l)) nil))
+      (for msg in l do (ratchet-decrypt rsb msg nil))
+      (setf l (for i in (counter 0 9) collect (ratchet-encrypt rsa (random-sequence))))
+      (for msg in (reverse l) do (ratchet-decrypt rsb msg nil))
+      ))
